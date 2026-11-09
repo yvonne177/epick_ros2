@@ -268,9 +268,12 @@ class EpickGui:
         self.telemetry_text.set(
             f"Vacuum: {data['vacuum_percent']}%    Pressure: {data['pressure_kpa']} kPa")
         readiness = "READY" if data["ready"] else "NOT ACTIVATED"
-        if data["vacuum_percent"] < 74:
-            flag = "Suction below 74% - readjust connection"
+        if data["vacuum_percent"] < 60:
+            flag = "Suction below 60% - readjust connection"
             style = "SuctionLow.TLabel"
+        elif data["vacuum_percent"] < 74:
+            flag = "Suction 60-<74% - potential suction failure; readjust connection"
+            style = "SuctionCheck.TLabel"
         else:
             flag = "Suction >=74% - threshold met"
             style = "SuctionMet.TLabel"

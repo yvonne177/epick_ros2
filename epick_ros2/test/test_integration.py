@@ -295,19 +295,23 @@ def test_gui_suction_flag_threshold_and_freshness(ros_context):
 
     try:
         assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
-        for vacuum, expected in ((0, "SuctionLow"), (73, "SuctionLow"),
+        for vacuum, expected in ((0, "SuctionLow"), (59, "SuctionLow"),
+                                 (60, "SuctionCheck"), (73, "SuctionCheck"),
                                  (74, "SuctionMet"), (78, "SuctionMet"),
-                                 (73, "SuctionLow")):
+                                 (73, "SuctionCheck"), (59, "SuctionLow")):
             sample(vacuum)
             assert gui.suction_flag.cget("style") == f"{expected}.TLabel"
             assert "READY" in gui.suction_flag.cget("text")
             if vacuum < 74:
                 assert "readjust connection" in gui.suction_flag.cget("text")
+                if vacuum >= 60:
+                    assert "potential suction failure" in gui.suction_flag.cget("text")
             else:
                 assert "threshold met" in gui.suction_flag.cget("text")
         style = ttk.Style(root)
         assert style.lookup("SuctionLow.TLabel", "background") == "#fee2e2"
         assert style.lookup("SuctionMet.TLabel", "background") == "#dcfce7"
+        assert style.lookup("SuctionCheck.TLabel", "background") == "#fef9c3"
         sample(74, status=0)
         assert gui.suction_flag.cget("style") == "SuctionCheck.TLabel"
         assert "NOT ACTIVATED" in gui.suction_flag.cget("text")
@@ -326,7 +330,10 @@ def test_gui_suction_flag_threshold_and_freshness(ros_context):
         gui._connection(Bool(data=True))
         assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
         sample(73)
-        assert gui.suction_flag.cget("style") == "SuctionLow.TLabel"
+        assert gui.suction_flag.cget("style") == "SuctionCheck.TLabel"
+        gui.last_sample = time.monotonic() - 3
+        gui._tick()
+        assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
     finally:
         gui._finish_close()
         node.destroy_node()
@@ -416,7 +423,8 @@ def test_gui_controls_plot_and_recording(backend, device, monkeypatch):
         assert any(gui.canvas.type(item) == "line"
                    for item in gui.canvas.find_withtag("vacuum_trace"))
         assert "70%" in gui.telemetry_text.get()
-        assert gui.suction_flag.cget("style") == "SuctionLow.TLabel"
+        assert gui.suction_flag.cget("style") == "SuctionCheck.TLabel"
+        assert "potential suction failure" in gui.suction_flag.cget("text")
         assert "readjust connection" in gui.suction_flag.cget("text")
         writes_before_restart = list(device.writes)
         recording_path = driver._recorder.path

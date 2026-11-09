@@ -91,8 +91,11 @@ The panel displays measured vacuum over the last 60 seconds, differential
 pressure, activation, object detection, actuator state, faults, recording state,
 and the output directory. Failed requests are shown explicitly. Telemetry older
 than two seconds is marked stale.
-The color-changing flag beside the activation status is red below **74% vacuum**:
-**Suction below 74% - readjust connection**. At **74% or above** it turns green
+The color-changing flag beside the activation status is red below **60% vacuum**:
+**Suction below 60% - readjust connection**. From **60% to below 74%** it is yellow:
+**Suction 60-<74% - potential suction failure; readjust connection**.
+This warning indicates low suction, not a prediction of when failure will occur.
+At **74% or above** it turns green
 and reports that the suction threshold is met. If the device is not activated or
 reports a fault, a threshold-met reading is yellow instead. Disconnected or stale
 telemetry makes the flag gray/unknown, never green. This is a display-only threshold,
