@@ -1,0 +1,25 @@
+epick_driver:
+  ros__parameters:
+    # Resolve the USB adapter on every connection, even if its ttyUSB number changes.
+    device: auto
+    adapter_serial_number: ""
+    baud_rate: 115200
+    parity: "N"
+    stop_bits: 1
+    slave_id: 9
+    poll_rate_hz: 10.0
+    response_timeout_seconds: 0.25
+
+    # Keep false while another application owns COM3.
+    connect_on_start: false
+    record_directory: ~/.ros/epick_data
+
+    advanced_mode: true
+    continuous_grip: false
+    # 100 requests continuous pumping, not an achievable 100% vacuum.
+    max_vacuum: 100
+    min_vacuum: 10
+    grip_timeout: 25.0
+    release_delay: 0.1
+    # Differential kPa: 0 maps to GUI/protocol value 100 (ambient).
+    release_pressure: 0
