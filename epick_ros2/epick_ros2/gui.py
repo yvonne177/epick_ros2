@@ -70,6 +70,14 @@ class EpickGui:
         style.configure("Muted.TLabel", foreground="#53657b")
         style.configure("Heading.TLabel", font=("TkDefaultFont", 22, "bold"))
         style.configure("Reading.TLabel", font=("TkDefaultFont", 12, "bold"))
+        for name, foreground, background in (
+            ("SuctionLow", "#9b1c1c", "#fee2e2"),
+            ("SuctionMet", "#166534", "#dcfce7"),
+            ("SuctionUnknown", "#53657b", "#e2e8f0"),
+            ("SuctionCheck", "#854d0e", "#fef9c3"),
+        ):
+            style.configure(f"{name}.TLabel", foreground=foreground, background=background,
+                            font=("TkDefaultFont", 11, "bold"), padding=(6, 4))
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
@@ -167,6 +175,11 @@ class EpickGui:
         self.telemetry_text = tk.StringVar(value="No live telemetry")
         ttk.Label(monitor, textvariable=self.telemetry_text, style="Reading.TLabel",
                   wraplength=600).pack(anchor="w")
+        self.suction_flag = ttk.Label(
+            monitor, text="Suction unknown - no live telemetry",
+            style="SuctionUnknown.TLabel", wraplength=600,
+        )
+        self.suction_flag.pack(anchor="w", pady=(4, 0))
         self.detail_text = tk.StringVar(value="Device state: unknown")
         ttk.Label(monitor, textvariable=self.detail_text, wraplength=600,
                   style="Muted.TLabel").pack(anchor="w", pady=(4, 12))
@@ -193,7 +206,7 @@ class EpickGui:
                   style="Muted.TLabel").grid(
                       row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        recording = ttk.LabelFrame(outer, text="4  Recording  |  ROS bag + CSV", padding=8)
+        recording = ttk.LabelFrame(outer, text="4  Recording  |  ROS bag + CSV + vacuum PNG", padding=8)
         recording.grid(row=4, column=0, sticky="ew")
         recording.columnconfigure(0, weight=1)
         self.variables["record_directory"] = tk.StringVar(value="~/.ros/epick_data")
@@ -233,6 +246,8 @@ class EpickGui:
         if not self.connected:
             self.last_sample = None
             self.telemetry_text.set("Disconnected - no live telemetry")
+            self.suction_flag.configure(text="Suction unknown - disconnected",
+                                        style="SuctionUnknown.TLabel")
             self.detail_text.set("Device state unknown; last plotted samples are historical")
 
     def _ports(self, message: String) -> None:
@@ -251,8 +266,18 @@ class EpickGui:
         self.last_sample = now
         self.samples.append((now, data["vacuum_percent"]))
         self.telemetry_text.set(
-            f"Vacuum: {data['vacuum_percent']}%    Pressure: {data['pressure_kpa']} kPa    "
-            f"{'READY' if data['ready'] else 'NOT ACTIVATED'}")
+            f"Vacuum: {data['vacuum_percent']}%    Pressure: {data['pressure_kpa']} kPa")
+        readiness = "READY" if data["ready"] else "NOT ACTIVATED"
+        if data["vacuum_percent"] < 74:
+            flag = "Suction below 74% - readjust connection"
+            style = "SuctionLow.TLabel"
+        else:
+            flag = "Suction >=74% - threshold met"
+            style = "SuctionMet.TLabel"
+            if not data["ready"] or data["fault_code"]:
+                flag += "; check device"
+                style = "SuctionCheck.TLabel"
+        self.suction_flag.configure(text=f"{readiness} | {flag}", style=style)
         self.detail_text.set(
             f"{data['object_description']} | {data['actuator_description']} | "
             f"Fault {data['fault_code']}: {data['fault_description']}")
@@ -435,6 +460,8 @@ class EpickGui:
                              "Check backend/device state before retrying.")
         if self.last_sample is not None and time.monotonic() - self.last_sample > 2:
             self.telemetry_text.set("STALE telemetry (>2 s) - do not rely on the last device state")
+            self.suction_flag.configure(text="Suction unknown - stale telemetry; check connection",
+                                        style="SuctionUnknown.TLabel")
         self._plot()
         self.root.after(40, self._tick)
 

@@ -11,7 +11,7 @@ from rclpy.parameter import Parameter
 from rclpy.parameter_client import AsyncParameterClient
 from std_srvs.srv import Trigger
 from rclpy.serialization import deserialize_message
-from std_msgs.msg import Float64, String
+from std_msgs.msg import Bool, Float64, String
 import rosbag2_py
 
 from epick_ros2.driver import EpickDriver
@@ -120,6 +120,13 @@ def test_ros_control_and_real_recording(backend, device):
                and row["vacuum_percent"] == "75" for row in rows)
     assert all(len(row["raw_hex"]) == 32 for row in rows)
     assert all(row["stamp_ns"] and row["timestamp_utc"] for row in rows)
+    with (path / "vacuum.csv").open() as file:
+        vacuum_rows = list(csv.DictReader(file))
+    assert len(vacuum_rows) == len(rows)
+    for telemetry, vacuum in zip(rows, vacuum_rows):
+        for name in ("stamp_ns", "timestamp_utc", "vacuum_percent", "pressure_kpa"):
+            assert vacuum[name] == telemetry[name]
+    assert (path / "vacuum.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     metadata = json.loads((path / "session.json").read_text())
     assert metadata["parameters"]["slave_id"] == 9
     for name, value in {
@@ -179,6 +186,26 @@ def test_recording_errors_are_reported(backend, tmp_path):
     assert not response.success
     assert "failed" in response.message
     assert not driver._recorder.active
+
+
+def test_graph_export_errors_are_reported(backend, monkeypatch):
+    driver, node, executor = backend
+    assert call(node, executor, "start_recording").success
+    assert call(node, executor, "connect").success
+    path = driver._recorder.path
+
+    def failed_export():
+        raise OSError("test graph export failure")
+
+    monkeypatch.setattr(driver._recorder, "_save_vacuum_graph", failed_export)
+    response = call(node, executor, "stop_recording")
+    assert not response.success
+    assert "test graph export failure" in response.message
+    assert "test graph export failure" in driver._last_error
+    assert not driver._recorder.active
+    assert (path / "bag" / "metadata.yaml").exists()
+    with (path / "vacuum.csv").open() as file:
+        assert list(csv.DictReader(file))
 
 
 def test_recording_write_failure_stops_and_finalizes(backend, monkeypatch):
@@ -248,6 +275,61 @@ def test_grip_retry_waits_for_stop_confirmation(backend, device, monkeypatch):
     assert len(set(observations)) == 1
     assert device.writes[-1] == driver._settings().command("grip")
     assert not any(command[3] >= 100 and command[0] & 8 for command in device.writes)
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="requires a graphical display")
+def test_gui_suction_flag_threshold_and_freshness(ros_context):
+    import tkinter as tk
+    from tkinter import ttk
+    from epick_ros2.gui import EpickGui
+    from epick_ros2.protocol import decode_status
+
+    node = Node("epick_test_suction_gui")
+    root = tk.Tk()
+    root.withdraw()
+    gui = EpickGui(root, node)
+
+    def sample(vacuum, status=0x31, fault=0):
+        state = decode_status(bytes([status, 0, fault, 0, 100 - vacuum] + [0] * 11))
+        gui._state(String(data=json.dumps(state)))
+
+    try:
+        assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
+        for vacuum, expected in ((0, "SuctionLow"), (73, "SuctionLow"),
+                                 (74, "SuctionMet"), (78, "SuctionMet"),
+                                 (73, "SuctionLow")):
+            sample(vacuum)
+            assert gui.suction_flag.cget("style") == f"{expected}.TLabel"
+            assert "READY" in gui.suction_flag.cget("text")
+            if vacuum < 74:
+                assert "readjust connection" in gui.suction_flag.cget("text")
+            else:
+                assert "threshold met" in gui.suction_flag.cget("text")
+        style = ttk.Style(root)
+        assert style.lookup("SuctionLow.TLabel", "background") == "#fee2e2"
+        assert style.lookup("SuctionMet.TLabel", "background") == "#dcfce7"
+        sample(74, status=0)
+        assert gui.suction_flag.cget("style") == "SuctionCheck.TLabel"
+        assert "NOT ACTIVATED" in gui.suction_flag.cget("text")
+        sample(74, fault=9)
+        assert gui.suction_flag.cget("style") == "SuctionCheck.TLabel"
+        sample(74)
+        gui.last_sample = time.monotonic() - 3
+        gui._tick()
+        assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
+        assert "stale" in gui.suction_flag.cget("text")
+        sample(74)
+        assert gui.suction_flag.cget("style") == "SuctionMet.TLabel"
+        gui._connection(Bool(data=False))
+        assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
+        assert "disconnected" in gui.suction_flag.cget("text")
+        gui._connection(Bool(data=True))
+        assert gui.suction_flag.cget("style") == "SuctionUnknown.TLabel"
+        sample(73)
+        assert gui.suction_flag.cget("style") == "SuctionLow.TLabel"
+    finally:
+        gui._finish_close()
+        node.destroy_node()
 
 
 @pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="requires a graphical display")
@@ -334,6 +416,8 @@ def test_gui_controls_plot_and_recording(backend, device, monkeypatch):
         assert any(gui.canvas.type(item) == "line"
                    for item in gui.canvas.find_withtag("vacuum_trace"))
         assert "70%" in gui.telemetry_text.get()
+        assert gui.suction_flag.cget("style") == "SuctionLow.TLabel"
+        assert "readjust connection" in gui.suction_flag.cget("text")
         writes_before_restart = list(device.writes)
         recording_path = driver._recorder.path
         last_sample = gui.last_sample
@@ -354,6 +438,9 @@ def test_gui_controls_plot_and_recording(backend, device, monkeypatch):
         click("Stop & save")
         pump_until(lambda: not gui.recording)
         assert (driver._recorder.path / "bag" / "metadata.yaml").exists()
+        assert (driver._recorder.path / "vacuum.png").exists()
+        with (driver._recorder.path / "vacuum.csv").open() as file:
+            assert any(row["vacuum_percent"] == "70" for row in csv.DictReader(file))
         assert len(list(csv.DictReader((driver._recorder.path / "telemetry.csv").open()))) > 0
         commands = [json.loads(deserialize_message(data, String).data)
                     for topic, data, _ in read_bag(driver._recorder.path)

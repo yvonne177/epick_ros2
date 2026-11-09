@@ -16,7 +16,7 @@ setup(
         ("share/" + package_name + "/config", glob("config/*.yaml")),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
     ],
-    install_requires=["setuptools", "pyserial"],
+    install_requires=["setuptools", "pyserial", "matplotlib"],
     zip_safe=True,
     maintainer="ePick ROS 2 Workspace",
     maintainer_email="maintainer@example.com",
